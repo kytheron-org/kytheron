@@ -1,0 +1,84 @@
+services:
+  db:
+    image: postgres:14
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: example
+      POSTGRES_DB: kytheron_development
+  cache:
+    image: redis
+    ports:
+      - '6379:6379'
+    command: redis-server
+    volumes:
+      - redis_data:/data
+  loki:
+    image: grafana/loki
+    ports:
+      - '3100:3100'
+    volumes:
+      - loki_data:/loki
+    configs:
+      - source: loki.yaml
+        target: /etc/loki/config.yaml
+    command: -config.file=/etc/loki/config.yaml
+    user: "0:0"
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - "9092:9092" # Client listener
+      - "9093:9093" # Internal controller listener
+    environment:
+      KAFKA_KRAFT_MODE: "true"
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: CLIENT://kafka:9092,CONTROLLER://kafka:9093
+      KAFKA_ADVERTISED_LISTENERS: CLIENT://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CLIENT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: CLIENT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LOG_DIRS: "/tmp/kraft-kafka-logs"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+volumes:
+  postgres_data: {}
+  redis_data: {}
+  loki_data: {}
+
+configs:
+  loki.yaml:
+    content: |
+      common:
+        ring:
+          instance_addr: 127.0.0.1
+          kvstore:
+            store: inmemory
+        replication_factor: 1
+        path_prefix: /loki
+      server:
+        http_listen_port: 3100
+        grpc_listen_port: 9096
+      auth_enabled: false
+      schema_config:
+        configs:
+          - from: 2020-05-15
+            store: tsdb
+            object_store: filesystem
+            schema: v13
+            index:
+              prefix: index_
+              period: 24h
+      
+      storage_config:
+        filesystem:
+          directory: /loki/chunks
+      
+      ingester:
+        wal:
+          dir: /loki/wal

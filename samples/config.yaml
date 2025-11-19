@@ -1,0 +1,36 @@
+database:
+  url: postgres:example@localhost:5432/kytheron_development?sslmode=disable
+
+cache:
+  url: localhost:6739/0
+
+plugins:
+  cloudtrail:
+    name: cloudtrail
+    version: v0.0.2
+  console:
+    name: console
+    version: v0.0.2
+
+policies:
+  url: "fs://"
+
+server:
+  http:
+    port: 3000
+  grpc:
+    port: 8000
+    maxSendMessageSize: 1073741824
+    maxRecvMessageSize: 1073741824
+
+registry:
+  cache: /tmp/kytheron-plugin-cache
+
+# We'll make kafka optional for lower spec deployments. These will
+# basically just forward received source messages to the appropriate
+# parser inline. For larger deployments, we'll delegate to Kafka
+kafka:
+  source:
+    url: localhost:9092
+  parser:
+    url: localhost:9092
