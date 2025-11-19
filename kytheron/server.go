@@ -6,6 +6,7 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/kytheron-org/kytheron-plugin-go/plugin"
 	"github.com/kytheron-org/kytheron/config"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"io"
 	"log"
@@ -20,6 +21,7 @@ type LogReceiveHandler func(rawLog *plugin.RawLog) error
 type GrpcServer struct {
 	plugin.UnimplementedSourcePluginServer
 	onLogReceiveHandlers []LogReceiveHandler
+	logger               *zap.Logger
 }
 
 var _ plugin.SourcePluginServer = &GrpcServer{}
@@ -63,7 +65,7 @@ func (s *GrpcServer) Start(cfg *config.Config) error {
 	//}
 	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", cfg.Server.Grpc.Port))
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		return err
 	}
 
 	sigs := make(chan os.Signal, 1)
@@ -75,7 +77,6 @@ func (s *GrpcServer) Start(cfg *config.Config) error {
 		grpc.MaxRecvMsgSize(cfg.Server.Grpc.MaxRecvMessageSize),
 	)
 	s.AddLogHandler(func(a *plugin.RawLog) error {
-		fmt.Println("message received")
 		// TODO: We should have a topic per configured ingester
 		topic := "ingest"
 
@@ -83,7 +84,8 @@ func (s *GrpcServer) Start(cfg *config.Config) error {
 		if err != nil {
 			return err
 		}
-		fmt.Println(string(content))
+
+		s.logger.Debug("producing message", zap.String("topic", topic))
 		return p.Produce(&kafka.Message{
 			TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
 			Value:          content,
@@ -93,7 +95,7 @@ func (s *GrpcServer) Start(cfg *config.Config) error {
 	plugin.RegisterSourcePluginServer(grpcServer, s)
 
 	go func() {
-		log.Printf("gRPC server listening on %v", lis.Addr())
+		s.logger.Info("grpc server listening", zap.String("address", lis.Addr().String()))
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Fatalf("failed to serve: %v", err)
 		}

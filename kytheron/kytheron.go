@@ -4,6 +4,7 @@ import (
 	"github.com/kytheron-org/kytheron/config"
 	"github.com/kytheron-org/kytheron/policy"
 	"github.com/kytheron-org/kytheron/registry"
+	"go.uber.org/zap"
 	"log"
 )
 
@@ -20,14 +21,16 @@ type Kytheron struct {
 	mappedPolicies map[string]map[string][]string
 	config         *config.Config
 	pluginRegistry *registry.PluginRegistry
+	logger         *zap.Logger
 }
 
-func New(cfg *config.Config, pluginRegistry *registry.PluginRegistry) *Kytheron {
+func New(cfg *config.Config, pluginRegistry *registry.PluginRegistry, logger *zap.Logger) *Kytheron {
 	k := &Kytheron{
 		Policies:       make(map[string]*policy.Policy),
 		mappedPolicies: make(map[string]map[string][]string),
 		pluginRegistry: pluginRegistry,
 		config:         cfg,
+		logger:         logger,
 	}
 	//for _, policy := range policies {
 	//	k.Policies[policy.Name] = policy
@@ -71,10 +74,10 @@ func (k *Kytheron) Init() {
 //}
 
 func (k *Kytheron) Run() error {
-	srv := &GrpcServer{}
+	srv := &GrpcServer{logger: k.logger}
 
 	go func() {
-		processor := &Processor{}
+		processor := &Processor{logger: k.logger}
 		if err := processor.Run(k.config, k.pluginRegistry); err != nil {
 			log.Fatal(err)
 		}

@@ -17,6 +17,7 @@ type Config struct {
 	Registry Registry          `yaml:"registry"`
 	Database Database          `yaml:"database"`
 	Kafka    KafkaMap          `yaml:"kafka"`
+	LogLevel string            `yaml:"logLevel"`
 }
 
 type Kafka struct {

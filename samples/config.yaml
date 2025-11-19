@@ -1,6 +1,8 @@
 database:
   url: postgres:example@localhost:5432/kytheron_development?sslmode=disable
 
+logLevel: debug
+
 cache:
   url: localhost:6739/0
 

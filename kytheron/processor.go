@@ -8,8 +8,14 @@ import (
 	pb "github.com/kytheron-org/kytheron-plugin-go/plugin"
 	"github.com/kytheron-org/kytheron/config"
 	"github.com/kytheron-org/kytheron/registry"
+	"go.uber.org/zap"
 	"io"
 	"time"
+)
+
+var (
+	ParsedTopic = "parsed"
+	IngestTopic = "ingest"
 )
 
 // Processor is going to handle a few things in one place, for now
@@ -20,12 +26,61 @@ import (
 //   - run policy evaluation on the log message
 
 type Processor struct {
-	config   *config.Config
-	registry *registry.PluginRegistry
+	config         *config.Config
+	registry       *registry.PluginRegistry
+	logger         *zap.Logger
+	parsedProducer *kafka.Producer
+}
+
+func (p *Processor) handleIngestMessage(msg *kafka.Message) error {
+	p.logger.Info("message on ingest", zap.String("partition", msg.TopicPartition.String()))
+	client, err := p.registry.Parser("cloudtrail")
+	if err != nil {
+		return err
+	}
+	// Parse the log
+	var log pb.RawLog
+	if err := json.Unmarshal(msg.Value, &log); err != nil {
+		return err
+	}
+
+	stream, err := client.ParseLog(context.TODO(), &log)
+	if err != nil {
+		return err
+	}
+
+	for {
+		parsedLog, err := stream.Recv()
+		if err == io.EOF {
+			stream.CloseSend()
+			break
+		}
+
+		p.logger.Debug("parsed log received")
+
+		if err != nil {
+			return err
+		}
+
+		content, err := json.Marshal(parsedLog)
+		if err != nil {
+			return err
+		}
+
+		p.logger.Debug("producing message to parsed topic")
+		if err := p.parsedProducer.Produce(&kafka.Message{
+			TopicPartition: kafka.TopicPartition{Topic: &ParsedTopic, Partition: kafka.PartitionAny},
+			Value:          content,
+		}, nil); err != nil {
+			return err
+		}
+		p.logger.Debug("produced message to parsed topic")
+	}
+	return nil
 }
 
 func (p *Processor) runSourceConsumer(messages chan<- string) {
-	fmt.Println("Starting source consumer")
+	p.logger.Info("starting source consumer")
 	c, err := kafka.NewConsumer(&kafka.ConfigMap{
 		"bootstrap.servers":  p.config.Kafka.Source.Url,
 		"group.id":           "kytheron",
@@ -48,69 +103,28 @@ func (p *Processor) runSourceConsumer(messages chan<- string) {
 		panic(err)
 	}
 	defer produce.Close()
+	p.parsedProducer = produce
 
 	run := true
 
-	parsedTopic := "parsed"
-
 	for run {
 		msg, err := c.ReadMessage(time.Second)
-		if err == nil {
-			fmt.Printf("Message on ingest %s: %s\n", msg.TopicPartition, string(msg.Value))
-			client, err := p.registry.Parser("cloudtrail")
-			if err != nil {
-				fmt.Println("failed getting client", err)
-				continue
-			}
-			// Parse the log
-			var log pb.RawLog
-			if err := json.Unmarshal(msg.Value, &log); err != nil {
-				fmt.Println("failed parsing log", err)
-				continue
-			}
-			fmt.Println(string(log.Data))
-			stream, err := client.ParseLog(context.TODO(), &log)
-			if err != nil {
-				fmt.Println("failed opening stream", err)
-				continue
-			}
-
-			for {
-				parsedLog, err := stream.Recv()
-				if err == io.EOF {
-					fmt.Println("Received ROF, closing stream")
-					stream.CloseSend()
-					break
-				}
-
-				fmt.Println("received parsed log")
-
-				if err != nil {
-					fmt.Println(err)
-					break
-				}
-
-				content, err := json.Marshal(parsedLog)
-				if err != nil {
-					fmt.Println(err)
-					break
-				}
-				fmt.Println(string(content))
-				fmt.Println("Producing message")
-				if err := produce.Produce(&kafka.Message{
-					TopicPartition: kafka.TopicPartition{Topic: &parsedTopic, Partition: kafka.PartitionAny},
-					Value:          content,
-				}, nil); err != nil {
-					fmt.Println(err)
-				}
-				fmt.Println("Parsed log put on topic successfully")
-			}
-		} else if !err.(kafka.Error).IsTimeout() {
+		if err != nil && !err.(kafka.Error).IsTimeout() {
 			// The client will automatically try to recover from all errors.
 			// Timeout is not considered an error because it is raised by
 			// ReadMessage in absence of messages.
-			fmt.Printf("sourceConsumer error: %v (%v)\n", err, msg)
+			p.logger.Warn("failed to read message", zap.Error(err), zap.String("topic", msg.TopicPartition.String()))
+			continue
 		}
+
+		if msg == nil {
+			continue
+		}
+
+		if err := p.handleIngestMessage(msg); err != nil {
+			p.logger.Warn("failed to handle ingest message", zap.Error(err))
+		}
+
 	}
 
 	c.Close()
@@ -118,7 +132,7 @@ func (p *Processor) runSourceConsumer(messages chan<- string) {
 }
 
 func (p *Processor) runParserConsumer(messages chan<- string) {
-	fmt.Println("Starting parser consumer")
+	p.logger.Info("starting parser consumer")
 	c, err := kafka.NewConsumer(&kafka.ConfigMap{
 		"bootstrap.servers": p.config.Kafka.Parser.Url,
 		"group.id":          "kytheron",
@@ -139,13 +153,16 @@ func (p *Processor) runParserConsumer(messages chan<- string) {
 
 	for run {
 		msg, err := c.ReadMessage(time.Second)
+		if err != nil && !err.(kafka.Error).IsTimeout() {
+			p.logger.Warn("failed to read message", zap.Error(err), zap.String("topic", msg.TopicPartition.String()))
+		}
 		if err == nil {
-			fmt.Printf("Message on parsed %s: %s\n", msg.TopicPartition, string(msg.Value))
+			p.logger.Debug("message received", zap.String("topic", msg.TopicPartition.String()))
 		} else if !err.(kafka.Error).IsTimeout() {
 			// The client will automatically try to recover from all errors.
 			// Timeout is not considered an error because it is raised by
 			// ReadMessage in absence of messages.
-			fmt.Printf("parserConsumer error: %v (%v)\n", err, msg)
+			p.logger.Warn("parseConsumerError", zap.Error(err))
 		}
 	}
 
@@ -154,7 +171,6 @@ func (p *Processor) runParserConsumer(messages chan<- string) {
 }
 
 func (p *Processor) Run(cfg *config.Config, pluginRegistry *registry.PluginRegistry) error {
-
 	processors := make(chan string, 2)
 
 	p.config = cfg
@@ -165,7 +181,7 @@ func (p *Processor) Run(cfg *config.Config, pluginRegistry *registry.PluginRegis
 
 	for i := 1; i <= 2; i++ {
 		msg := <-processors
-		fmt.Println(msg)
+		p.logger.Info("processor finished", zap.String("topic", msg))
 	}
 
 	return nil
