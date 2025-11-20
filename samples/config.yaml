@@ -9,10 +9,10 @@ cache:
 plugins:
   cloudtrail:
     name: cloudtrail
-    version: v0.0.2
+    version: v0.0.4
   console:
     name: console
-    version: v0.0.2
+    version: v0.0.3
 
 policies:
   url: "fs://"
@@ -36,3 +36,6 @@ kafka:
     url: localhost:9092
   parser:
     url: localhost:9092
+
+loki:
+  url: http://localhost:3100/loki
