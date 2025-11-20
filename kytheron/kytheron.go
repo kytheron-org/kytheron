@@ -77,8 +77,7 @@ func (k *Kytheron) Run() error {
 	srv := &GrpcServer{logger: k.logger}
 
 	go func() {
-		processor := &Processor{logger: k.logger}
-		if err := processor.Run(k.config, k.pluginRegistry); err != nil {
+		if err := NewProcessor(k.config, k.pluginRegistry, k.logger).Run(); err != nil {
 			log.Fatal(err)
 		}
 	}()

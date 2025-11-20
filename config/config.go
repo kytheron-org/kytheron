@@ -18,6 +18,11 @@ type Config struct {
 	Database Database          `yaml:"database"`
 	Kafka    KafkaMap          `yaml:"kafka"`
 	LogLevel string            `yaml:"logLevel"`
+	Loki     Loki              `yaml:"loki"`
+}
+
+type Loki struct {
+	Url string `yaml:"url"`
 }
 
 type Kafka struct {

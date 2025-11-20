@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
+	"github.com/google/uuid"
 	"github.com/kytheron-org/kytheron-plugin-go/plugin"
 	"github.com/kytheron-org/kytheron/config"
 	"go.uber.org/zap"
@@ -58,11 +59,6 @@ func (s *GrpcServer) Start(cfg *config.Config) error {
 	}
 	defer p.Close()
 
-	// TODO: Should be able to bind to HTTP interface
-	//l, err := listener.NewSocket(os.Getenv("PLUGIN_UNIX_SOCKET_DIR"), "kytheron")
-	//if err != nil {
-	//	return err
-	//}
 	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", cfg.Server.Grpc.Port))
 	if err != nil {
 		return err
@@ -79,6 +75,9 @@ func (s *GrpcServer) Start(cfg *config.Config) error {
 	s.AddLogHandler(func(a *plugin.RawLog) error {
 		// TODO: We should have a topic per configured ingester
 		topic := "ingest"
+
+		logId := uuid.Must(uuid.NewUUID())
+		a.Id = logId.String()
 
 		content, err := json.Marshal(a)
 		if err != nil {
